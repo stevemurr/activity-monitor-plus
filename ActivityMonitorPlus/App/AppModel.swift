@@ -85,17 +85,7 @@ final class AppModel {
 
     private func apply(_ update: SamplingUpdate) {
         let snapshot = update.snapshot
-        if let logPath = ProcessInfo.processInfo.environment["AMP_DEBUG"] {
-            let attributed = snapshot.cpu.processes.compactMap(\.cpuFraction).reduce(0, +)
-            let line = "AMP_DEBUG apply: total=\(snapshot.cpu.totalUsedFraction) perProcSum=\(attributed) at \(snapshot.timestamp.timeIntervalSince1970)\n"
-            if let handle = FileHandle(forWritingAtPath: logPath) {
-                handle.seekToEndOfFile()
-                handle.write(Data(line.utf8))
-                try? handle.close()
-            } else {
-                FileHandle.standardError.write(Data(line.utf8))
-            }
-        }
+        DebugLog.write("apply total=\(snapshot.cpu.totalUsedFraction) at \(snapshot.timestamp.timeIntervalSince1970)")
         var cpuSnapshot = snapshot.cpu
         cpuSnapshot.processes = smoother.smooth(cpuSnapshot.processes)
         cpu = cpuSnapshot

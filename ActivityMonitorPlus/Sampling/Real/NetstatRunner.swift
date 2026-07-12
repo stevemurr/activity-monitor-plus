@@ -1,39 +1,43 @@
 import Foundation
 
-/// Spawns `netstat -anv` for tcp and udp and parses the socket table.
-/// Stateless, so trivially Sendable.
+/// Spawns `netstat -anv` (all protocols in one table) and parses the socket
+/// list.
+///
+/// Serialized on a private queue: `Foundation.Process` races when several
+/// instances are launched concurrently, which both corrupts output and can
+/// deadlock. A watchdog terminates a stuck netstat so a single hung spawn can
+/// never freeze the sampling loop.
 final class NetstatRunner: ConnectionSnapshotProviding {
+    private let queue = DispatchQueue(label: "com.stevemurr.ActivityMonitorPlus.netstat")
+
     func snapshot() async -> [ConnectionSnapshot] {
-        async let tcp = run(["-anv", "-p", "tcp"])
-        async let udp = run(["-anv", "-p", "udp"])
-        let outputs = await [tcp, udp]
-        return outputs.flatMap { NetstatParser.filterNoise(NetstatParser.parse($0)) }
+        let output = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
+            queue.async { continuation.resume(returning: Self.runOnce()) }
+        }
+        return NetstatParser.filterNoise(NetstatParser.parse(output))
     }
 
-    private func run(_ arguments: [String]) async -> String {
-        await withCheckedContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/sbin/netstat")
-            process.arguments = arguments
-            let pipe = Pipe()
-            process.standardOutput = pipe
-            process.standardError = FileHandle.nullDevice
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(returning: "")
-                return
-            }
-            // Drain the pipe off the cooperative pool; reading before waiting
-            // avoids the classic full-pipe-buffer deadlock. Process/Pipe are
-            // not Sendable but are owned solely by this closure chain.
-            nonisolated(unsafe) let ownedProcess = process
-            nonisolated(unsafe) let ownedPipe = pipe
-            DispatchQueue.global(qos: .utility).async {
-                let data = ownedPipe.fileHandleForReading.readDataToEndOfFile()
-                ownedProcess.waitUntilExit()
-                continuation.resume(returning: String(data: data, encoding: .utf8) ?? "")
-            }
+    private static func runOnce() -> String {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/netstat")
+        process.arguments = ["-anv"]
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+        do {
+            try process.run()
+        } catch {
+            return ""
         }
+        // Never let a stuck netstat block the sampler indefinitely.
+        let watchdog = DispatchWorkItem {
+            if process.isRunning { process.terminate() }
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 4, execute: watchdog)
+        // Read to EOF before reaping — the canonical no-deadlock ordering.
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        watchdog.cancel()
+        return String(decoding: data, as: UTF8.self)
     }
 }
