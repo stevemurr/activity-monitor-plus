@@ -34,7 +34,6 @@ struct ActivityMonitorPlusApp: App {
                 .preferredColorScheme(colorScheme)
         } label: {
             MenuBarLabel()
-                .environment(model)
         }
         .menuBarExtraStyle(.window)
     }

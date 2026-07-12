@@ -117,13 +117,10 @@ final class ActivityMonitorPlusUITests: XCTestCase {
                              "expected FixtureProcA below FixtureProcF for Lowest CPU")
     }
 
-    func testMenuBarExtraShowsCPU() {
+    func testMenuBarExtraExists() {
+        // Icon-only status item (no percentage text, to avoid width jitter).
         let item = app.statusItems.firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 10), "menu bar status item missing")
-        XCTAssertTrue(item.label.contains("62%") || item.title.contains("62%")
-                      || item.value as? String == "62%"
-                      || item.staticTexts["62%"].exists,
-                      "status item should show fixture CPU percent, got label '\(item.label)'")
     }
 
     func testProcessQuitRemovesRow() {

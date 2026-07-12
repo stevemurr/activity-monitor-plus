@@ -1,21 +1,10 @@
 import SwiftUI
 
 struct MenuBarLabel: View {
-    @Environment(AppModel.self) private var model
-
     var body: some View {
-        // Image + Text is the supported composition for a status item label.
+        // Icon only — a fixed-width glyph, so the item never shifts. Live
+        // stats live in the dropdown.
         Image(systemName: "gauge.with.dots.needle.67percent")
-        // Reserve the width of the widest value ("100%") and right-align the
-        // current reading inside it, with monospaced digits, so the item's
-        // width never changes as the percent updates (no menu-bar jitter).
-        Text("100%")
-            .monospacedDigit()
-            .hidden()
-            .overlay(alignment: .trailing) {
-                Text(Format.percent(model.cpu.totalUsedFraction))
-                    .monospacedDigit()
-            }
     }
 }
 
