@@ -6,7 +6,16 @@ struct MenuBarLabel: View {
     var body: some View {
         // Image + Text is the supported composition for a status item label.
         Image(systemName: "gauge.with.dots.needle.67percent")
-        Text(Format.percent(model.cpu.totalUsedFraction))
+        // Reserve the width of the widest value ("100%") and right-align the
+        // current reading inside it, with monospaced digits, so the item's
+        // width never changes as the percent updates (no menu-bar jitter).
+        Text("100%")
+            .monospacedDigit()
+            .hidden()
+            .overlay(alignment: .trailing) {
+                Text(Format.percent(model.cpu.totalUsedFraction))
+                    .monospacedDigit()
+            }
     }
 }
 
