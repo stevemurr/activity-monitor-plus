@@ -11,10 +11,19 @@ struct ActivityMonitorPlusApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             RootView()
                 .environment(model)
         }
         .defaultSize(width: 1100, height: 720)
+
+        MenuBarExtra {
+            MenuBarContentView()
+                .environment(model)
+        } label: {
+            MenuBarLabel()
+                .environment(model)
+        }
+        .menuBarExtraStyle(.window)
     }
 }

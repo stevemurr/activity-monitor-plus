@@ -35,20 +35,24 @@ struct SamplerSet: Sendable {
     var makeStorage: @Sendable () -> any StorageSampling
     var makeThroughput: @Sendable () -> any ThroughputSampling
     var makeConnections: @Sendable () -> any ConnectionSnapshotProviding
+    var processController: any ProcessControlling
 
     static func live() -> SamplerSet {
         SamplerSet(makeCPU: { LiveCPUSampler() },
                    makeMemory: { LiveMemorySampler() },
                    makeStorage: { LiveStorageSampler() },
                    makeThroughput: { LiveThroughputSampler() },
-                   makeConnections: { NetstatRunner() })
+                   makeConnections: { NetstatRunner() },
+                   processController: LiveProcessController())
     }
 
     static func fixtures() -> SamplerSet {
-        SamplerSet(makeCPU: { FixtureCPUSampler() },
-                   makeMemory: { FixtureMemorySampler() },
-                   makeStorage: { FixtureStorageSampler() },
-                   makeThroughput: { FixtureThroughputSampler() },
-                   makeConnections: { FixtureConnectionProvider() })
+        let state = FixtureProcessState()
+        return SamplerSet(makeCPU: { FixtureCPUSampler(state: state) },
+                          makeMemory: { FixtureMemorySampler() },
+                          makeStorage: { FixtureStorageSampler() },
+                          makeThroughput: { FixtureThroughputSampler() },
+                          makeConnections: { FixtureConnectionProvider() },
+                          processController: FixtureProcessController(state: state))
     }
 }

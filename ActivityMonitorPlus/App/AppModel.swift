@@ -12,6 +12,8 @@ struct ThroughputPoint: Identifiable, Sendable {
 final class AppModel {
     private(set) var cpu = CPUSnapshot(totalUsedFraction: 0, coreCount: 1, processes: [])
     private(set) var donutSlices: [DonutSlice] = []
+    /// Bumped once per sampling tick; views observe this to refresh derived state.
+    private(set) var lastUpdate = Date.distantPast
     private(set) var memory: MemorySnapshot?
     private(set) var volumes: [VolumeInfo] = []
     private(set) var throughput = NetworkThroughput.zero
@@ -25,11 +27,14 @@ final class AppModel {
     }
 
     private var eventLog = RingBuffer<ConnectionEvent>(capacity: 2000)
+    private var smoother = ProcessSmoother()
     private let coordinator: SamplingCoordinator
+    private let processController: any ProcessControlling
     private var consumeTask: Task<Void, Never>?
 
     init(samplers: SamplerSet, autoStart: Bool = true) {
         coordinator = SamplingCoordinator(samplers: samplers)
+        processController = samplers.processController
         // Hosted unit tests launch the app binary; don't sample the real
         // system underneath them.
         let underUnitTest =
@@ -61,6 +66,23 @@ final class AppModel {
         connectionEvents = []
     }
 
+    /// Returns human-readable error strings for processes that could not be
+    /// terminated (empty on full success).
+    func terminate(pids: [(pid: Int32, name: String)], force: Bool) -> [String] {
+        pids.compactMap { process in
+            let outcome = processController.terminate(pid: process.pid, force: force)
+            return outcome.errorDescription.map { "\(process.name): \($0)" }
+        }
+    }
+
+    func details(pid: Int32, name: String) -> ProcessDetails {
+        processController.details(pid: pid, name: name)
+    }
+
+    func recentEvents(forPid pid: Int32, limit: Int = 8) -> [ConnectionEvent] {
+        Array(connectionEvents.lazy.filter { $0.pid == pid }.prefix(limit))
+    }
+
     private func apply(_ update: SamplingUpdate) {
         let snapshot = update.snapshot
         if let logPath = ProcessInfo.processInfo.environment["AMP_DEBUG"] {
@@ -74,8 +96,11 @@ final class AppModel {
                 FileHandle.standardError.write(Data(line.utf8))
             }
         }
-        cpu = snapshot.cpu
-        donutSlices = CPUDonutSlices.compute(cpu: snapshot.cpu)
+        var cpuSnapshot = snapshot.cpu
+        cpuSnapshot.processes = smoother.smooth(cpuSnapshot.processes)
+        cpu = cpuSnapshot
+        donutSlices = CPUDonutSlices.compute(cpu: cpuSnapshot)
+        lastUpdate = snapshot.timestamp
         memory = snapshot.memory
         volumes = snapshot.volumes
         throughput = snapshot.throughput

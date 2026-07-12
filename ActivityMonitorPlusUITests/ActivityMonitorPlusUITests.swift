@@ -117,6 +117,65 @@ final class ActivityMonitorPlusUITests: XCTestCase {
                              "expected FixtureProcA below FixtureProcF for Lowest CPU")
     }
 
+    func testMenuBarExtraShowsCPU() {
+        let item = app.statusItems.firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 10), "menu bar status item missing")
+        XCTAssertTrue(item.label.contains("62%") || item.title.contains("62%")
+                      || item.value as? String == "62%"
+                      || item.staticTexts["62%"].exists,
+                      "status item should show fixture CPU percent, got label '\(item.label)'")
+    }
+
+    func testProcessQuitRemovesRow() {
+        openSidebarItem("processes", fallbackLabel: "Processes")
+        XCTAssertTrue(element("processes.table").waitForExistence(timeout: 10))
+
+        let procF = app.staticTexts["FixtureProcF"].firstMatch
+        XCTAssertTrue(procF.waitForExistence(timeout: 10))
+        procF.click() // select the row
+
+        let quitButton = element("processes.quitButton")
+        XCTAssertTrue(quitButton.waitForExistence(timeout: 5))
+        quitButton.click()
+
+        // Confirmation dialog: choose plain Quit (fixture controller marks the
+        // pid killed; next fixture tick omits it).
+        let confirmQuit = app.buttons["Quit"].firstMatch
+        XCTAssertTrue(confirmQuit.waitForExistence(timeout: 5), "quit confirmation missing")
+        confirmQuit.click()
+
+        XCTAssertTrue(procF.waitForNonExistence(timeout: 10),
+                      "FixtureProcF should disappear after quit")
+        // The rest of the table is unaffected.
+        XCTAssertTrue(app.staticTexts["FixtureProcA"].firstMatch.exists)
+    }
+
+    func testProcessInspectShowsDetails() {
+        openSidebarItem("processes", fallbackLabel: "Processes")
+        XCTAssertTrue(element("processes.table").waitForExistence(timeout: 10))
+
+        let procA = app.staticTexts["FixtureProcA"].firstMatch
+        XCTAssertTrue(procA.waitForExistence(timeout: 10))
+        procA.click()
+
+        let inspectButton = element("processes.inspectButton")
+        XCTAssertTrue(inspectButton.waitForExistence(timeout: 5))
+        inspectButton.click()
+
+        // Anchor on concrete elements: bare layout containers don't surface
+        // in the macOS AX tree, so the sheet is detected via its content.
+        let path = element("inspect.path")
+        XCTAssertTrue(path.waitForExistence(timeout: 5), "inspect sheet did not appear")
+        XCTAssertTrue(text(of: path).contains("/Applications/FixtureProcA.app"),
+                      "unexpected path text: \(text(of: path))")
+        XCTAssertTrue(staticText(containing: "fixtureuser").exists, "user missing")
+
+        let done = element("inspect.done", fallbackLabel: "Done")
+        XCTAssertTrue(done.exists)
+        done.click()
+        XCTAssertTrue(path.waitForNonExistence(timeout: 5))
+    }
+
     func testNetworkLogShowsFixtureEvents() {
         openSidebarItem("network", fallbackLabel: "Network")
         XCTAssertTrue(element("network.table").waitForExistence(timeout: 10))

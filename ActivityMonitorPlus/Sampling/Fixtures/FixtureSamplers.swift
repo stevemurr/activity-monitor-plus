@@ -5,9 +5,30 @@ import Synchronization
 /// deliberately unmistakable so assertions can't collide with real system
 /// state, and full data is available from the first tick (no warm-up).
 
+/// Shared mutable state between fixture samplers and the fixture process
+/// controller, so "quitting" a fixture process makes it disappear from
+/// subsequent samples exactly like a real kill would.
+final class FixtureProcessState: Sendable {
+    private let killed = Mutex<Set<Int32>>([])
+
+    func markKilled(_ pid: Int32) {
+        killed.withLock { _ = $0.insert(pid) }
+    }
+
+    func isKilled(_ pid: Int32) -> Bool {
+        killed.withLock { $0.contains(pid) }
+    }
+}
+
 final class FixtureCPUSampler: CPUSampling {
+    private let state: FixtureProcessState
+
+    init(state: FixtureProcessState = FixtureProcessState()) {
+        self.state = state
+    }
+
     func sample() -> CPUSnapshot {
-        CPUSnapshot(totalUsedFraction: 0.62, userFraction: 0.44, systemFraction: 0.18,
+        var snapshot = CPUSnapshot(totalUsedFraction: 0.62, userFraction: 0.44, systemFraction: 0.18,
                     coreCount: 8, processes: [
             ProcessSample(pid: 101, name: "FixtureProcA", cpuFraction: 0.30,
                           residentBytes: 1_200_000_000),
@@ -24,6 +45,31 @@ final class FixtureCPUSampler: CPUSampling {
             ProcessSample(pid: 107, name: "FixtureRootProc", cpuFraction: nil,
                           residentBytes: nil),
         ])
+        snapshot.processes.removeAll { state.isKilled($0.pid) }
+        return snapshot
+    }
+}
+
+final class FixtureProcessController: ProcessControlling {
+    private let state: FixtureProcessState
+
+    init(state: FixtureProcessState) {
+        self.state = state
+    }
+
+    func terminate(pid: Int32, force: Bool) -> TerminateOutcome {
+        guard (101...107).contains(pid) else { return .notFound }
+        // FixtureRootProc simulates a root-owned process.
+        guard pid != 107 else { return .permissionDenied }
+        state.markKilled(pid)
+        return .success
+    }
+
+    func details(pid: Int32, name: String) -> ProcessDetails {
+        ProcessDetails(pid: pid, name: name,
+                       path: "/Applications/\(name).app/Contents/MacOS/\(name)",
+                       parentPid: 1, user: "fixtureuser",
+                       startDate: Date(timeIntervalSince1970: 1_783_880_000))
     }
 }
 

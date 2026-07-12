@@ -1,35 +1,30 @@
 import SwiftUI
 
-struct ProcessRow: Identifiable {
-    let pid: Int32
-    let name: String
-    let cpuFraction: Double?
-    let residentBytes: UInt64?
-    var id: Int32 { pid }
-    // Unreadable (nil) values sort below every real value.
-    var cpuSortKey: Double { cpuFraction ?? -1 }
-    var memorySortKey: Double { residentBytes.map(Double.init) ?? -1 }
-}
-
 struct ProcessTableView: View {
     @Environment(AppModel.self) private var model
     @State private var sortOrder = [KeyPathComparator(\ProcessRow.cpuSortKey,
                                                       order: .reverse)]
     @State private var filter = ""
+    @State private var selection = Set<Int32>()
+    @State private var ranker = StableRanker()
+    @State private var displayed: [ProcessRow] = []
+    @State private var showQuitDialog = false
+    @State private var killErrors: [String] = []
+    @State private var inspected: InspectTarget?
 
-    private var rows: [ProcessRow] {
-        var rows = model.cpu.processes.map {
-            ProcessRow(pid: $0.pid, name: $0.name,
-                       cpuFraction: $0.cpuFraction, residentBytes: $0.residentBytes)
-        }
-        if !filter.isEmpty {
-            rows = rows.filter { $0.name.localizedCaseInsensitiveContains(filter) }
-        }
-        return rows.sorted(using: sortOrder)
+    private struct InspectTarget: Identifiable {
+        let row: ProcessRow
+        let details: ProcessDetails
+        let events: [ConnectionEvent]
+        var id: Int32 { row.pid }
+    }
+
+    private var selectedRows: [ProcessRow] {
+        displayed.filter { selection.contains($0.pid) }
     }
 
     var body: some View {
-        Table(rows, sortOrder: $sortOrder) {
+        Table(displayed, selection: $selection, sortOrder: $sortOrder) {
             TableColumn("Process", value: \.name) { row in
                 Text(row.name)
             }
@@ -50,23 +45,115 @@ struct ProcessTableView: View {
             }
             .width(min: 70, ideal: 90, max: 120)
         }
+        .contextMenu(forSelectionType: Int32.self) { pids in
+            if !pids.isEmpty {
+                Button("Inspect") {
+                    selection = pids
+                    inspectFirstSelected()
+                }
+                Divider()
+                Button("Quit…", role: .destructive) {
+                    selection = pids
+                    showQuitDialog = true
+                }
+            }
+        } primaryAction: { pids in
+            selection = pids
+            inspectFirstSelected()
+        }
         .accessibilityIdentifier("processes.table")
         .searchable(text: $filter, placement: .toolbar, prompt: "Filter processes")
         .navigationTitle("Processes")
-        .navigationSubtitle("\(rows.count) processes")
-        .toolbar {
-            ToolbarItem {
-                // Stable sorting control (Table header AX can be flaky in XCUITest).
-                Picker("Sort", selection: sortSelection) {
-                    Text("Highest CPU").tag(SortChoice.cpuDescending)
-                    Text("Lowest CPU").tag(SortChoice.cpuAscending)
-                    Text("Name").tag(SortChoice.name)
-                    Text("Memory").tag(SortChoice.memory)
-                }
-                .pickerStyle(.menu)
-                .accessibilityIdentifier("processes.sortPicker")
-            }
+        .navigationSubtitle("\(displayed.count) processes")
+        .toolbar { toolbarContent }
+        .onAppear { refreshRows(force: true) }
+        .onChange(of: model.lastUpdate) { refreshRows() }
+        .onChange(of: sortOrder) { refreshRows(force: true) }
+        .onChange(of: filter) { refreshRows() }
+        .confirmationDialog(quitDialogTitle, isPresented: $showQuitDialog) {
+            Button("Quit", role: .destructive) { performKill(force: false) }
+            Button("Force Quit", role: .destructive) { performKill(force: true) }
+        } message: {
+            Text("Quit sends the process a termination request; Force Quit ends it immediately and may lose unsaved data.")
         }
+        .alert("Some processes could not be quit", isPresented: .init(
+            get: { !killErrors.isEmpty },
+            set: { if !$0 { killErrors = [] } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(killErrors.joined(separator: "\n"))
+        }
+        .sheet(item: $inspected) { target in
+            ProcessInspectView(row: target.row, details: target.details,
+                               events: target.events)
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem {
+            Button {
+                inspectFirstSelected()
+            } label: {
+                Label("Inspect", systemImage: "info.circle")
+            }
+            .disabled(selection.isEmpty)
+            .help("Show details for the selected process")
+            .accessibilityIdentifier("processes.inspectButton")
+        }
+        ToolbarItem {
+            Button {
+                showQuitDialog = true
+            } label: {
+                Label("Quit Process", systemImage: "xmark.octagon")
+            }
+            .disabled(selection.isEmpty)
+            .help("Quit or force-quit the selected processes")
+            .accessibilityIdentifier("processes.quitButton")
+        }
+        ToolbarItem {
+            Picker("Sort", selection: sortSelection) {
+                Text("Highest CPU").tag(SortChoice.cpuDescending)
+                Text("Lowest CPU").tag(SortChoice.cpuAscending)
+                Text("Name").tag(SortChoice.name)
+                Text("Memory").tag(SortChoice.memory)
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("processes.sortPicker")
+        }
+    }
+
+    private var quitDialogTitle: String {
+        let names = selectedRows.map(\.name)
+        switch names.count {
+        case 0: return "Quit process?"
+        case 1: return "Quit “\(names[0])”?"
+        default: return "Quit \(names.count) processes?"
+        }
+    }
+
+    private func refreshRows(force: Bool = false) {
+        let all = model.cpu.processes.map(ProcessRow.init)
+        let ordered = ranker.orderedRows(all, sortedBy: sortOrder, now: Date(),
+                                         forceRerank: force)
+        displayed = filter.isEmpty
+            ? ordered
+            : ordered.filter { $0.name.localizedCaseInsensitiveContains(filter) }
+        // Drop selection entries for processes that no longer exist.
+        let livePids = Set(all.map(\.pid))
+        selection = selection.intersection(livePids)
+    }
+
+    private func performKill(force: Bool) {
+        let targets = selectedRows.map { (pid: $0.pid, name: $0.name) }
+        killErrors = model.terminate(pids: targets, force: force)
+    }
+
+    private func inspectFirstSelected() {
+        guard let row = selectedRows.first else { return }
+        inspected = InspectTarget(row: row,
+                                  details: model.details(pid: row.pid, name: row.name),
+                                  events: model.recentEvents(forPid: row.pid))
     }
 
     private enum SortChoice: Hashable {
