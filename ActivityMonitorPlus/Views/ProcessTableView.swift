@@ -8,8 +8,16 @@ struct ProcessTableView: View {
     @State private var selection = Set<Int32>()
     @State private var ranker = StableRanker()
     @State private var displayed: [ProcessRow] = []
+    @State private var totalCount = 0
+    @State private var matchCount = 0
     @State private var showQuitDialog = false
     @State private var killErrors: [String] = []
+
+    /// SwiftUI's Table uses automatic row heights, which forces AppKit to
+    /// realize an NSHostingView for every row (not just visible ones) on any
+    /// reorder/filter — O(rows) synchronous main-thread work. Capping the
+    /// rendered rows bounds that cost; the full set is still searchable.
+    private static let displayLimit = 150
     @State private var inspected: InspectTarget?
 
     private struct InspectTarget: Identifiable {
@@ -64,7 +72,7 @@ struct ProcessTableView: View {
         .accessibilityIdentifier("processes.table")
         .searchable(text: $filter, placement: .toolbar, prompt: "Filter processes")
         .navigationTitle("Processes")
-        .navigationSubtitle("\(displayed.count) processes")
+        .navigationSubtitle(subtitle)
         .toolbar { toolbarContent }
         .onAppear { refreshRows(force: true) }
         .onChange(of: model.lastUpdate) { refreshRows() }
@@ -123,6 +131,18 @@ struct ProcessTableView: View {
         }
     }
 
+    private var subtitle: String {
+        if !filter.isEmpty {
+            let shown = min(matchCount, Self.displayLimit)
+            return matchCount > Self.displayLimit
+                ? "\(shown) of \(matchCount) matches"
+                : "\(matchCount) \(matchCount == 1 ? "match" : "matches")"
+        }
+        return totalCount > Self.displayLimit
+            ? "Top \(Self.displayLimit) of \(totalCount) processes"
+            : "\(totalCount) processes"
+    }
+
     private var quitDialogTitle: String {
         let names = selectedRows.map(\.name)
         switch names.count {
@@ -136,9 +156,12 @@ struct ProcessTableView: View {
         let all = model.cpu.processes.map(ProcessRow.init)
         let ordered = ranker.orderedRows(all, sortedBy: sortOrder, now: Date(),
                                          forceRerank: force)
-        displayed = filter.isEmpty
+        let matches = filter.isEmpty
             ? ordered
             : ordered.filter { $0.name.localizedCaseInsensitiveContains(filter) }
+        totalCount = all.count
+        matchCount = matches.count
+        displayed = Array(matches.prefix(Self.displayLimit))
         // Drop selection entries for processes that no longer exist.
         let livePids = Set(all.map(\.pid))
         selection = selection.intersection(livePids)
