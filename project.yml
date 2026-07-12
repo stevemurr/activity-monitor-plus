@@ -1,0 +1,58 @@
+name: ActivityMonitorPlus
+options:
+  bundleIdPrefix: com.stevemurr
+  deploymentTarget:
+    macOS: "15.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: "-"
+    DEVELOPMENT_TEAM: ""
+targets:
+  ActivityMonitorPlus:
+    type: application
+    platform: macOS
+    sources: [ActivityMonitorPlus]
+    info:
+      path: ActivityMonitorPlus/Info.plist
+      properties:
+        LSApplicationCategoryType: public.app-category.utilities
+        NSPrincipalClass: NSApplication
+        NSHighResolutionCapable: true
+        CFBundleDisplayName: Activity Monitor Plus
+  ActivityMonitorPlusTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources: [ActivityMonitorPlusTests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: ActivityMonitorPlus
+  ActivityMonitorPlusUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources: [ActivityMonitorPlusUITests]
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: ActivityMonitorPlus
+schemes:
+  ActivityMonitorPlus:
+    build:
+      targets:
+        ActivityMonitorPlus: all
+    run:
+      config: Debug
+    test:
+      targets: [ActivityMonitorPlusTests]
+  ActivityMonitorPlusUITests:
+    build:
+      targets:
+        ActivityMonitorPlus: all
+        ActivityMonitorPlusUITests: [test]
+    test:
+      targets: [ActivityMonitorPlusUITests]

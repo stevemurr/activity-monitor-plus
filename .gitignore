@@ -1,0 +1,6 @@
+*.xcodeproj
+build/
+test-results/
+DerivedData/
+xcuserdata/
+.DS_Store
