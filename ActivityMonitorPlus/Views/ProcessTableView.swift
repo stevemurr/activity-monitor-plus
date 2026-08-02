@@ -5,6 +5,7 @@ struct ProcessTableView: View {
     @State private var sortOrder = [KeyPathComparator(\ProcessRow.cpuSortKey,
                                                       order: .reverse)]
     @State private var filter = ""
+    @State private var scope = ProcessScope.all
     @State private var selection = Set<Int32>()
     @State private var ranker = StableRanker()
     @State private var displayed: [ProcessRow] = []
@@ -12,13 +13,11 @@ struct ProcessTableView: View {
     @State private var matchCount = 0
     @State private var showQuitDialog = false
     @State private var killErrors: [String] = []
-
-    /// SwiftUI's Table uses automatic row heights, which forces AppKit to
-    /// realize an NSHostingView for every row (not just visible ones) on any
-    /// reorder/filter — O(rows) synchronous main-thread work. Capping the
-    /// rendered rows bounds that cost; the full set is still searchable.
-    private static let displayLimit = 150
     @State private var inspected: InspectTarget?
+
+    /// Bounds AppKit's eager table-row realization cost while leaving the full
+    /// process set available to search and scope filters.
+    private static let displayLimit = 150
 
     private struct InspectTarget: Identifiable {
         let row: ProcessRow
@@ -27,57 +26,51 @@ struct ProcessTableView: View {
         var id: Int32 { row.pid }
     }
 
+    private enum ProcessScope: String, CaseIterable, Identifiable {
+        case all = "All"
+        case active = "Active"
+        case highCPU = "High CPU"
+        var id: Self { self }
+    }
+
     private var selectedRows: [ProcessRow] {
         displayed.filter { selection.contains($0.pid) }
     }
 
+    private var topProcess: ProcessRow? {
+        model.cpu.processes.map(ProcessRow.init)
+            .max { $0.cpuSortKey < $1.cpuSortKey }
+    }
+
     var body: some View {
-        Table(displayed, selection: $selection, sortOrder: $sortOrder) {
-            TableColumn("Process", value: \.name) { row in
-                Text(row.name)
-            }
-            TableColumn("PID", value: \.pid) { row in
-                Text(String(row.pid))
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-            }
-            .width(min: 50, ideal: 60, max: 80)
-            TableColumn("% CPU", value: \.cpuSortKey) { row in
-                Text(row.cpuFraction.map { Format.percent($0) } ?? "—")
-                    .monospacedDigit()
-            }
-            .width(min: 60, ideal: 70, max: 90)
-            TableColumn("Memory", value: \.memorySortKey) { row in
-                Text(row.residentBytes.map(Format.bytes) ?? "—")
-                    .monospacedDigit()
-            }
-            .width(min: 70, ideal: 90, max: 120)
-        }
-        .contextMenu(forSelectionType: Int32.self) { pids in
-            if !pids.isEmpty {
-                Button("Inspect") {
-                    selection = pids
-                    inspectFirstSelected()
-                }
-                Divider()
-                Button("Quit…", role: .destructive) {
-                    selection = pids
-                    showQuitDialog = true
+        VStack(spacing: 16) {
+            summaryTiles
+
+            DashboardCard {
+                VStack(spacing: 0) {
+                    controls
+                        .padding(.bottom, 12)
+                    Divider()
+                    HStack(spacing: 0) {
+                        processTable
+                        if let selected = selectedRows.first {
+                            Divider()
+                            selectionInspector(selected)
+                                .frame(width: 235)
+                        }
+                    }
                 }
             }
-        } primaryAction: { pids in
-            selection = pids
-            inspectFirstSelected()
+            .frame(maxHeight: .infinity)
         }
-        .accessibilityIdentifier("processes.table")
-        .searchable(text: $filter, placement: .toolbar, prompt: "Filter processes")
+        .padding(20)
         .navigationTitle("Processes")
         .navigationSubtitle(subtitle)
-        .toolbar { toolbarContent }
         .onAppear { refreshRows(force: true) }
         .onChange(of: model.lastUpdate) { refreshRows() }
         .onChange(of: sortOrder) { refreshRows(force: true) }
         .onChange(of: filter) { refreshRows() }
+        .onChange(of: scope) { refreshRows(force: true) }
         .confirmationDialog(quitDialogTitle, isPresented: $showQuitDialog) {
             Button("Quit", role: .destructive) { performKill(force: false) }
             Button("Force Quit", role: .destructive) { performKill(force: true) }
@@ -97,9 +90,64 @@ struct ProcessTableView: View {
         }
     }
 
-    @ToolbarContentBuilder
-    private var toolbarContent: some ToolbarContent {
-        ToolbarItem {
+    private var summaryTiles: some View {
+        HStack(spacing: 14) {
+            MetricTile(title: "CPU Load",
+                       value: Format.percent(model.cpu.totalUsedFraction),
+                       detail: "across \(model.cpu.coreCount) cores",
+                       color: AMPStyle.blue,
+                       progress: model.cpu.totalUsedFraction,
+                       symbol: "cpu")
+            MetricTile(title: "Memory Used",
+                       value: model.memory.map { Format.bytes($0.usedBytes) } ?? "—",
+                       detail: model.memory.map { "of \(Format.bytes($0.totalBytes))" },
+                       color: AMPStyle.purple,
+                       progress: model.memory?.usedFraction,
+                       symbol: "memorychip")
+            MetricTile(title: "Top Process",
+                       value: topProcess?.name ?? "—",
+                       detail: topProcess?.cpuFraction.map(Format.percent),
+                       color: AMPStyle.blue,
+                       symbol: "chart.bar.fill")
+        }
+        .frame(height: 104)
+    }
+
+    private var controls: some View {
+        HStack(spacing: 10) {
+            Picker("Scope", selection: $scope) {
+                ForEach(ProcessScope.allCases) { scope in
+                    Text(scope.rawValue).tag(scope)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 240)
+
+            Spacer(minLength: 12)
+
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
+                TextField("Filter processes", text: $filter)
+                    .textFieldStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .frame(width: 220, height: 28)
+            .background(AMPStyle.subtleFill, in: RoundedRectangle(cornerRadius: 7))
+            .overlay {
+                RoundedRectangle(cornerRadius: 7).stroke(AMPStyle.border)
+            }
+
+            Picker("Sort", selection: sortSelection) {
+                Text("Highest CPU").tag(SortChoice.cpuDescending)
+                Text("Lowest CPU").tag(SortChoice.cpuAscending)
+                Text("Name").tag(SortChoice.name)
+                Text("Memory").tag(SortChoice.memory)
+            }
+            .pickerStyle(.menu)
+            .accessibilityIdentifier("processes.sortPicker")
+
             Button {
                 inspectFirstSelected()
             } label: {
@@ -108,8 +156,7 @@ struct ProcessTableView: View {
             .disabled(selection.isEmpty)
             .help("Show details for the selected process")
             .accessibilityIdentifier("processes.inspectButton")
-        }
-        ToolbarItem {
+
             Button {
                 showQuitDialog = true
             } label: {
@@ -119,28 +166,154 @@ struct ProcessTableView: View {
             .help("Quit or force-quit the selected processes")
             .accessibilityIdentifier("processes.quitButton")
         }
-        ToolbarItem {
-            Picker("Sort", selection: sortSelection) {
-                Text("Highest CPU").tag(SortChoice.cpuDescending)
-                Text("Lowest CPU").tag(SortChoice.cpuAscending)
-                Text("Name").tag(SortChoice.name)
-                Text("Memory").tag(SortChoice.memory)
+        .labelStyle(.iconOnly)
+    }
+
+    private var processTable: some View {
+        Table(displayed, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Process", value: \ProcessRow.name) { row in
+                HStack(spacing: 8) {
+                    ProcessIconView(pid: row.pid, size: 24)
+                    Text(row.name).lineLimit(1)
+                }
             }
-            .pickerStyle(.menu)
-            .accessibilityIdentifier("processes.sortPicker")
+            TableColumn("Status") { _ in
+                HStack(spacing: 6) {
+                    Circle().fill(AMPStyle.green).frame(width: 7, height: 7)
+                    Text("Running")
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .width(min: 70, ideal: 82, max: 95)
+            TableColumn("PID", value: \ProcessRow.pid) { row in
+                Text(String(row.pid))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .width(min: 48, ideal: 54, max: 66)
+            TableColumn("CPU", value: \ProcessRow.cpuSortKey) { row in
+                HStack(spacing: 7) {
+                    Text(row.cpuFraction.map(Format.percent) ?? "—")
+                        .monospacedDigit()
+                        .frame(width: 38, alignment: .trailing)
+                    ResourceBar(fraction: row.cpuFraction ?? 0)
+                }
+            }
+            .width(min: 85, ideal: 105, max: 125)
+            TableColumn("Memory", value: \ProcessRow.memorySortKey) { row in
+                Text(row.residentBytes.map(Format.bytes) ?? "—")
+                    .monospacedDigit()
+            }
+            .width(min: 72, ideal: 82, max: 100)
+            TableColumn("Energy") { row in
+                energyIndicator(row.cpuFraction)
+            }
+            .width(min: 48, ideal: 54, max: 64)
+        }
+        .contextMenu(forSelectionType: Int32.self) { pids in
+            if !pids.isEmpty {
+                Button("Inspect") {
+                    selection = pids
+                    inspectFirstSelected()
+                }
+                Divider()
+                Button("Quit…", role: .destructive) {
+                    selection = pids
+                    showQuitDialog = true
+                }
+            }
+        } primaryAction: { pids in
+            selection = pids
+            inspectFirstSelected()
+        }
+        .accessibilityIdentifier("processes.table")
+        .frame(minHeight: 410)
+    }
+
+    private func energyIndicator(_ cpu: Double?) -> some View {
+        let value = cpu ?? 0
+        return HStack(spacing: 2) {
+            ForEach(0..<(value > 0.1 ? 2 : value > 0.01 ? 1 : 0), id: \.self) { _ in
+                Image(systemName: "bolt.fill")
+                    .foregroundStyle(AMPStyle.orange)
+            }
+            if value <= 0.01 {
+                Text("—").foregroundStyle(.secondary)
+            }
+        }
+        .font(.caption)
+    }
+
+    private func selectionInspector(_ row: ProcessRow) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 11) {
+                ProcessIconView(pid: row.pid, size: 42)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(row.name)
+                        .font(.headline)
+                        .lineLimit(1)
+                    Text("PID \(row.pid)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+            }
+
+            Divider()
+            inspectorMetric("CPU", row.cpuFraction.map(Format.percent) ?? "Unavailable",
+                            fraction: row.cpuFraction, color: AMPStyle.blue)
+            inspectorMetric("Memory", row.residentBytes.map(Format.bytes) ?? "Unavailable",
+                            fraction: memoryFraction(row), color: AMPStyle.purple)
+
+            HStack {
+                Text("Network Events")
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(model.recentEvents(forPid: row.pid).count))
+                    .monospacedDigit()
+            }
+            .font(.caption)
+
+            Spacer()
+
+            Button("Inspect Details") { inspectFirstSelected() }
+                .frame(maxWidth: .infinity)
+            Button("Quit…", role: .destructive) { showQuitDialog = true }
+                .frame(maxWidth: .infinity)
+        }
+        .padding(.leading, 16)
+        .padding(.vertical, 14)
+    }
+
+    private func inspectorMetric(_ title: String, _ value: String,
+                                 fraction: Double?, color: Color) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text(title).foregroundStyle(.secondary)
+                Spacer()
+                Text(value).monospacedDigit()
+            }
+            .font(.caption)
+            ResourceBar(fraction: fraction ?? 0, color: color)
         }
     }
 
+    private func memoryFraction(_ row: ProcessRow) -> Double? {
+        guard let bytes = row.residentBytes,
+              let total = model.memory?.totalBytes, total > 0 else { return nil }
+        return Double(bytes) / Double(total)
+    }
+
     private var subtitle: String {
-        if !filter.isEmpty {
+        if !filter.isEmpty || scope != .all {
             let shown = min(matchCount, Self.displayLimit)
             return matchCount > Self.displayLimit
                 ? "\(shown) of \(matchCount) matches"
                 : "\(matchCount) \(matchCount == 1 ? "match" : "matches")"
         }
         return totalCount > Self.displayLimit
-            ? "Top \(Self.displayLimit) of \(totalCount) processes"
-            : "\(totalCount) processes"
+            ? "Top \(Self.displayLimit) of \(totalCount) running"
+            : "\(totalCount) running"
     }
 
     private var quitDialogTitle: String {
@@ -156,15 +329,20 @@ struct ProcessTableView: View {
         let all = model.cpu.processes.map(ProcessRow.init)
         let ordered = ranker.orderedRows(all, sortedBy: sortOrder, now: Date(),
                                          forceRerank: force)
+        let scoped = ordered.filter { row in
+            switch scope {
+            case .all: true
+            case .active: (row.cpuFraction ?? 0) > 0.001
+            case .highCPU: (row.cpuFraction ?? 0) >= 0.05
+            }
+        }
         let matches = filter.isEmpty
-            ? ordered
-            : ordered.filter { $0.name.localizedCaseInsensitiveContains(filter) }
+            ? scoped
+            : scoped.filter { $0.name.localizedCaseInsensitiveContains(filter) }
         totalCount = all.count
         matchCount = matches.count
         displayed = Array(matches.prefix(Self.displayLimit))
-        // Drop selection entries for processes that no longer exist.
-        let livePids = Set(all.map(\.pid))
-        selection = selection.intersection(livePids)
+        selection = selection.intersection(Set(all.map(\.pid)))
     }
 
     private func performKill(force: Bool) {

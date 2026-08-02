@@ -8,8 +8,22 @@ struct ThroughputPoint: Identifiable, Sendable {
     var id: Date { timestamp }
 }
 
+struct SystemHistoryPoint: Identifiable, Sendable {
+    let timestamp: Date
+    let cpuUsedFraction: Double
+    let userFraction: Double
+    let systemFraction: Double
+    let memoryUsedBytes: UInt64?
+    var id: Date { timestamp }
+}
+
 @MainActor @Observable
 final class AppModel {
+    /// SwiftUI's macOS Table eagerly does substantial work per row on every
+    /// update. Keep the live one-second refresh responsive while retaining the
+    /// larger eventLog for history and process inspection.
+    private static let displayedNetworkEventLimit = 300
+
     private(set) var cpu = CPUSnapshot(totalUsedFraction: 0, coreCount: 1, processes: [])
     private(set) var donutSlices: [DonutSlice] = []
     /// Bumped once per sampling tick; views observe this to refresh derived state.
@@ -18,6 +32,7 @@ final class AppModel {
     private(set) var volumes: [VolumeInfo] = []
     private(set) var throughput = NetworkThroughput.zero
     private(set) var throughputHistory: [ThroughputPoint] = []
+    private(set) var systemHistory: [SystemHistoryPoint] = []
     /// Newest-first, for the network log table.
     private(set) var connectionEvents: [ConnectionEvent] = []
     var isNetworkLogPaused = false {
@@ -30,11 +45,15 @@ final class AppModel {
     private var smoother = ProcessSmoother()
     private let coordinator: SamplingCoordinator
     private let processController: any ProcessControlling
+    /// On-demand disk-usage scanner for the storage breakdown sheet. Stateless
+    /// and `Sendable`, so a single instance from the sampler seam is enough.
+    let diskScanner: any DiskScanning
     private var consumeTask: Task<Void, Never>?
 
     init(samplers: SamplerSet, autoStart: Bool = true) {
         coordinator = SamplingCoordinator(samplers: samplers)
         processController = samplers.processController
+        diskScanner = samplers.makeDiskScanner()
         // Hosted unit tests launch the app binary; don't sample the real
         // system underneath them.
         let underUnitTest =
@@ -80,7 +99,20 @@ final class AppModel {
     }
 
     func recentEvents(forPid pid: Int32, limit: Int = 8) -> [ConnectionEvent] {
-        Array(connectionEvents.lazy.filter { $0.pid == pid }.prefix(limit))
+        Array(eventLog.newestFirst(limit: eventLog.count).lazy
+            .filter { $0.pid == pid }.prefix(limit))
+    }
+
+    var activeConnectionCount: Int {
+        var resolved = Set<ConnectionKey>()
+        var count = 0
+        for event in connectionEvents {
+            let key = ConnectionKey(proto: event.proto, local: event.local,
+                                    remote: event.remote, pid: event.pid)
+            guard resolved.insert(key).inserted else { continue }
+            if event.kind != .closed { count += 1 }
+        }
+        return count
     }
 
     private func apply(_ update: SamplingUpdate) {
@@ -94,6 +126,15 @@ final class AppModel {
         memory = snapshot.memory
         volumes = snapshot.volumes
         throughput = snapshot.throughput
+        systemHistory.append(SystemHistoryPoint(
+            timestamp: snapshot.timestamp,
+            cpuUsedFraction: snapshot.cpu.totalUsedFraction,
+            userFraction: snapshot.cpu.userFraction,
+            systemFraction: snapshot.cpu.systemFraction,
+            memoryUsedBytes: snapshot.memory?.usedBytes))
+        if systemHistory.count > 60 {
+            systemHistory.removeFirst(systemHistory.count - 60)
+        }
         throughputHistory.append(ThroughputPoint(
             timestamp: snapshot.timestamp,
             bytesInPerSecond: snapshot.throughput.bytesInPerSecond,
@@ -110,6 +151,6 @@ final class AppModel {
     }
 
     private func refreshDisplayedEvents() {
-        connectionEvents = eventLog.elements.reversed()
+        connectionEvents = eventLog.newestFirst(limit: Self.displayedNetworkEventLimit)
     }
 }

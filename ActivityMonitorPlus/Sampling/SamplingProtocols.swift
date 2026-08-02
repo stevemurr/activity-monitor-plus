@@ -35,6 +35,9 @@ struct SamplerSet: Sendable {
     var makeStorage: @Sendable () -> any StorageSampling
     var makeThroughput: @Sendable () -> any ThroughputSampling
     var makeConnections: @Sendable () -> any ConnectionSnapshotProviding
+    /// On-demand disk-usage scanner for the storage breakdown sheet. Unlike the
+    /// 1 Hz samplers this runs only when the user asks, so it's a plain factory.
+    var makeDiskScanner: @Sendable () -> any DiskScanning
     var processController: any ProcessControlling
 
     static func live() -> SamplerSet {
@@ -43,6 +46,7 @@ struct SamplerSet: Sendable {
                    makeStorage: { LiveStorageSampler() },
                    makeThroughput: { LiveThroughputSampler() },
                    makeConnections: { NetstatRunner() },
+                   makeDiskScanner: { LiveDiskScanner() },
                    processController: LiveProcessController())
     }
 
@@ -53,6 +57,7 @@ struct SamplerSet: Sendable {
                           makeStorage: { FixtureStorageSampler() },
                           makeThroughput: { FixtureThroughputSampler() },
                           makeConnections: { FixtureConnectionProvider() },
+                          makeDiskScanner: { FixtureDiskScanner() },
                           processController: FixtureProcessController(state: state))
     }
 }

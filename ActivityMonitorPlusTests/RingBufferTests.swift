@@ -26,6 +26,15 @@ final class RingBufferTests: XCTestCase {
         buffer.append(contentsOf: [7, 8, 9])
         XCTAssertEqual(buffer.elements, [8, 9])
     }
+
+    func testNewestFirstReturnsBoundedRecentWindow() {
+        var buffer = RingBuffer<Int>(capacity: 5)
+        buffer.append(contentsOf: [1, 2, 3, 4, 5, 6, 7])
+
+        XCTAssertEqual(buffer.newestFirst(limit: 3), [7, 6, 5])
+        XCTAssertEqual(buffer.newestFirst(limit: 20), [7, 6, 5, 4, 3])
+        XCTAssertEqual(buffer.newestFirst(limit: 0), [])
+    }
 }
 
 final class FormattersTests: XCTestCase {

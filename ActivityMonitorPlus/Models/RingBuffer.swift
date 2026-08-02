@@ -35,6 +35,13 @@ struct RingBuffer<Element> {
         guard storage.count == capacity, head > 0 else { return storage }
         return Array(storage[head...]) + Array(storage[..<head])
     }
+
+    /// The most recent elements, newest-first. This lets live views render a
+    /// bounded window without reducing the buffer retained for other callers.
+    func newestFirst(limit: Int) -> [Element] {
+        guard limit > 0 else { return [] }
+        return Array(elements.suffix(limit).reversed())
+    }
 }
 
 extension RingBuffer: Sendable where Element: Sendable {}

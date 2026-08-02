@@ -200,4 +200,94 @@ final class ActivityMonitorPlusUITests: XCTestCase {
         let clear = element("network.clearButton")
         XCTAssertTrue(clear.exists)
     }
+
+    func testStorageBreakdownOpensAndDrillsDown() {
+        // Open the breakdown by clicking the fixture volume row on the Storage card.
+        let row = element("overview.storage.Fixture HD", fallbackLabel: "Fixture HD")
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+
+        // The fixture scanner returns instantly; the sunburst legend lists the
+        // deterministic top-level folders.
+        let moviesRow = element("storage.breakdown.legend.Fixture Movies",
+                                fallbackLabel: "Fixture Movies")
+        XCTAssertTrue(moviesRow.waitForExistence(timeout: 15),
+                      "storage breakdown sheet / legend did not appear")
+
+        // Capture the working sunburst first so the shot survives any later
+        // AX-flaky assertion.
+        Thread.sleep(forTimeInterval: 1.0)
+        let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+        shot.name = "04-storage-breakdown"
+        shot.lifetime = .keepAlways
+        add(shot)
+
+        // Legend rows combine their children into the button, so they're found
+        // by identifier, not by an inner static text.
+        XCTAssertTrue(element("storage.breakdown.legend.Fixture Xcode",
+                              fallbackLabel: "Fixture Xcode").exists, "Fixture Xcode legend missing")
+        // The unattributed remainder against the fixture volume's used space.
+        XCTAssertTrue(element("storage.breakdown.legend.System / hidden space").exists,
+                      "hidden-space slice missing")
+        // Center/header render the volume's used bytes (300 GB for Fixture HD).
+        XCTAssertTrue(staticText(containing: "300 GB").waitForExistence(timeout: 5),
+                      "used-bytes total missing")
+
+        // Drill into a folder via its legend row; the breadcrumb and the new
+        // ring's contents update.
+        moviesRow.click()
+        XCTAssertTrue(element("storage.breakdown.crumb.Fixture Movies",
+                              fallbackLabel: "Fixture Movies").waitForExistence(timeout: 5),
+                      "breadcrumb did not add the drilled folder")
+        XCTAssertTrue(element("storage.breakdown.legend.BigMovie.mov",
+                              fallbackLabel: "BigMovie.mov").waitForExistence(timeout: 5),
+                      "drilled folder's contents not shown")
+
+        // Close the sheet. "Done" is the sheet's default action; the button's
+        // custom identifier isn't reliably exposed for a default-styled button,
+        // so fall back to its title, then to the Return key.
+        let drilled = element("storage.breakdown.legend.BigMovie.mov",
+                              fallbackLabel: "BigMovie.mov")
+        let doneById = app.buttons["storage.breakdown.done"].firstMatch
+        let doneByTitle = app.buttons["Done"].firstMatch
+        if doneById.exists { doneById.click() }
+        else if doneByTitle.exists { doneByTitle.click() }
+        else { app.typeKey("\r", modifierFlags: []) }
+        XCTAssertTrue(drilled.waitForNonExistence(timeout: 5), "breakdown sheet did not dismiss")
+    }
+
+    /// Drilling into a many-file folder fills the legend past the visible area,
+    /// so the overlay scrollbar appears. The fix reserves a trailing gutter so
+    /// the bar floats beside the rows rather than over their chevron/size —
+    /// this captures the regression shot for the long-list overlap.
+    func testStorageBreakdownLongListScrollbar() {
+        let row = element("overview.storage.Fixture HD", fallbackLabel: "Fixture HD")
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.click()
+
+        // Drill into the many-file fixture folder.
+        let music = element("storage.breakdown.legend.Fixture Music",
+                            fallbackLabel: "Fixture Music")
+        XCTAssertTrue(music.waitForExistence(timeout: 15),
+                      "storage breakdown legend did not appear")
+        music.click()
+
+        // 20 itemized tracks + a "smaller items" fold — more rows than fit, so
+        // the legend scrolls.
+        let firstTrack = element("storage.breakdown.legend.FixtureTrack-01.mp3",
+                                 fallbackLabel: "FixtureTrack-01.mp3")
+        XCTAssertTrue(firstTrack.waitForExistence(timeout: 5),
+                      "drilled folder's tracks not shown")
+
+        // Scroll so the overlay scrollbar is drawn, then shoot right away —
+        // overlay scrollers fade ~1s after the gesture ends. Two shots in quick
+        // succession to improve the odds of catching the bar mid-fade.
+        firstTrack.swipeUp()
+        for name in ["05-storage-long-list-a", "05-storage-long-list-b"] {
+            let shot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+    }
 }

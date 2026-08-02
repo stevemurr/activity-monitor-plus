@@ -1,9 +1,9 @@
 # Activity Monitor Plus
 
-A better macOS system monitor. A native SwiftUI app that leads with a high-level
-dashboard — a donut of the top CPU consumers, memory pressure, storage, and
-network throughput — with a live network connection log and a fast, stable
-process table behind it.
+A better macOS system monitor. A native SwiftUI app that leads with a polished
+live dashboard for system load, top CPU consumers, memory pressure, storage,
+and network throughput — with a rich connection log and a fast, stable process
+table behind it.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%2015%2B-111111)
 ![Swift](https://img.shields.io/badge/Swift-6.0-F05138)
@@ -13,22 +13,22 @@ process table behind it.
 
 ## Features
 
-- **Overview dashboard (primary view).** A donut chart of the top five CPU
-  processes plus "Other" and "Idle", with an Activity-Monitor-style
-  User / System / Idle split; a memory card broken into App / Wired /
-  Compressed; per-volume storage bars; and network in/out rates with a
-  60-second throughput sparkline.
-- **Process table.** Sortable by name, PID, %CPU, or memory, with search.
+- **Overview dashboard (primary view).** A 60-second system-load history with
+  an Activity-Monitor-style User / System / Idle split and direct links to the
+  busiest processes; memory pressure and composition; interactive per-volume
+  storage cards; and live download/upload history.
+- **Process dashboard.** Live CPU, memory, and top-process summaries above a
+  scoped table sortable by name, PID, %CPU, or memory, with search and native
+  application icons where available.
   Values are exponentially smoothed and row order is frozen between periodic
   re-ranks, so the table reads calmly instead of oscillating every second.
   Select any process to **Inspect** it (path, user, parent PID, start time, and
   its recent network activity) or **Quit / Force Quit** it.
-- **Network log.** A live feed of connection events — opened, closed, and
-  per-interval traffic with bytes in/out — attributed to process and remote
-  address, built by diffing socket snapshots once a second. Pause and clear
-  from the toolbar.
-- **Menu bar extra.** A gauge in the menu bar; click it for live CPU, memory,
-  and network figures without opening the window.
+- **Network dashboard.** A 60-second throughput chart above a grouped live feed
+  of opened, closed, and per-interval traffic events, plus process rankings and
+  protocol composition. Pause and clear from the toolbar.
+- **Menu bar extra.** A compact companion dashboard with CPU history, memory,
+  network rates, and the top three processes without opening the main window.
 - **Appearance.** Follows the system Light/Dark setting, with a manual override
   in Settings (⌘,).
 

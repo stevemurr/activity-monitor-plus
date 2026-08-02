@@ -1,26 +1,34 @@
 import Foundation
 
-/// Spawns `netstat -anv` (all protocols in one table) and parses the socket
-/// list.
+/// Spawns protocol-filtered `netstat -anv` commands and parses the socket list.
 ///
-/// Serialized on a private queue: `Foundation.Process` races when several
-/// instances are launched concurrently, which both corrupts output and can
-/// deadlock. A watchdog terminates a stuck netstat so a single hung spawn can
-/// never freeze the sampling loop.
+/// Both commands run sequentially on a private queue: `Foundation.Process`
+/// races when instances launch concurrently, which can corrupt output or
+/// deadlock. Filtering at the command keeps each sample small by excluding the
+/// unrelated UNIX, routing, and kernel-control tables emitted by bare `-anv`.
+/// A watchdog terminates a stuck command so it cannot freeze the sampling loop.
 final class NetstatRunner: ConnectionSnapshotProviding {
     private let queue = DispatchQueue(label: "com.stevemurr.ActivityMonitorPlus.netstat")
 
     func snapshot() async -> [ConnectionSnapshot] {
-        let output = await withCheckedContinuation { (continuation: CheckedContinuation<String, Never>) in
-            queue.async { continuation.resume(returning: Self.runOnce()) }
+        await withCheckedContinuation { continuation in
+            queue.async {
+                let snapshots = ["tcp", "udp"].flatMap { proto in
+                    let output = Self.runOnce(arguments: ["-anv", "-p", proto])
+                    return NetstatParser.parse(output)
+                }
+                let filtered = NetstatParser.filterNoise(snapshots)
+                continuation.resume(returning: filtered.isEmpty
+                    ? LibprocSocketSnapshotter.snapshot()
+                    : filtered)
+            }
         }
-        return NetstatParser.filterNoise(NetstatParser.parse(output))
     }
 
-    private static func runOnce() -> String {
+    private static func runOnce(arguments: [String]) -> String {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/netstat")
-        process.arguments = ["-anv"]
+        process.arguments = arguments
         let pipe = Pipe()
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice

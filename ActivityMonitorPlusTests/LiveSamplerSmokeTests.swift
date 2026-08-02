@@ -53,6 +53,8 @@ final class LiveSamplerSmokeTests: XCTestCase {
 
     func testNetstatRunnerParsesLiveSocketTable() async {
         let rows = await NetstatRunner().snapshot()
+        XCTAssertFalse(rows.isEmpty,
+                       "live sampler returned no usable TCP/UDP sockets")
         // Every parsed row must be structurally sane.
         for row in rows {
             XCTAssertFalse(row.key.local.isEmpty)

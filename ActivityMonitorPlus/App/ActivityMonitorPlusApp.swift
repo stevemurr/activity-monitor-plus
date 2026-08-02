@@ -21,7 +21,7 @@ struct ActivityMonitorPlusApp: App {
                 .environment(model)
                 .preferredColorScheme(colorScheme)
         }
-        .defaultSize(width: 1100, height: 720)
+        .defaultSize(width: 1280, height: 820)
 
         Settings {
             AppearanceSettingsView()

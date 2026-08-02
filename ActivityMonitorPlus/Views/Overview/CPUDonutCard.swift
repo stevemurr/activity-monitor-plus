@@ -1,117 +1,144 @@
 import Charts
 import SwiftUI
 
-/// Fixed categorical order validated for adjacent-pair CVD separation
-/// (blue → orange → purple → green → pink). "Other"/"Idle" stay neutral.
-enum SlicePalette {
-    static let processColors: [Color] = [
-        Color(nsColor: .systemBlue),
-        Color(nsColor: .systemOrange),
-        Color(nsColor: .systemPurple),
-        Color(nsColor: .systemGreen),
-        Color(nsColor: .systemPink),
-    ]
-
-    static func colors(for slices: [DonutSlice]) -> [(slice: DonutSlice, color: Color)] {
-        var processIndex = 0
-        return slices.map { slice in
-            switch slice.category {
-            case .process:
-                let color = processColors[processIndex % processColors.count]
-                processIndex += 1
-                return (slice, color)
-            case .other:
-                return (slice, Color(nsColor: .systemGray))
-            case .idle:
-                return (slice, Color(nsColor: .quaternaryLabelColor))
-            }
-        }
-    }
-}
-
+/// Kept under its original type name so existing accessibility and screenshot
+/// coverage continue to follow the CPU surface after the redesign.
 struct CPUDonutCard: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.navigateSidebar) private var navigateSidebar
+
+    private var topProcesses: [ProcessSample] {
+        Array(model.cpu.processes
+            .filter { $0.cpuFraction != nil }
+            .sorted { ($0.cpuFraction ?? 0) > ($1.cpuFraction ?? 0) }
+            .prefix(3))
+    }
 
     var body: some View {
-        let colored = SlicePalette.colors(for: model.donutSlices)
-        Card(title: "CPU", symbol: "cpu") {
-            HStack(alignment: .center, spacing: 28) {
-                donut(colored)
-                legend(colored)
-                Spacer(minLength: 0)
-            }
-        }
-        .accessibilityIdentifier("overview.cpuCard")
-    }
-
-    private func donut(_ colored: [(slice: DonutSlice, color: Color)]) -> some View {
-        Group {
-            if colored.isEmpty {
-                Circle()
-                    .stroke(Color(nsColor: .quaternaryLabelColor), lineWidth: 18)
-                    .padding(12)
-            } else {
-                Chart(colored, id: \.slice.id) { entry in
-                    SectorMark(angle: .value("Share", entry.slice.fraction),
-                               innerRadius: .ratio(0.62),
-                               angularInset: 1.5)
-                        .cornerRadius(3)
-                        .foregroundStyle(entry.color)
-                }
-                .chartLegend(.hidden)
-                // Collapse the chart's per-slice AX elements: the legend is the
-                // accessible representation, and constant AX snapshotting of a
-                // redrawing canvas is exactly what UI tests hammer on.
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("CPU usage chart, \(Format.percent(model.cpu.totalUsedFraction)) in use")
-            }
-        }
-        .frame(width: 170, height: 170)
-        // Identifier goes on the chart before the overlay so the overlay's
-        // texts keep their own identifiers.
-        .accessibilityIdentifier("overview.cpuDonut")
-        .overlay {
-            VStack(spacing: 0) {
-                Text(Format.percent(model.cpu.totalUsedFraction))
-                    .font(.system(size: 26, weight: .semibold, design: .rounded))
-                    .monospacedDigit()
-                    .accessibilityIdentifier("overview.cpuTotalLabel")
-                Text("CPU")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-
-    private func legend(_ colored: [(slice: DonutSlice, color: Color)]) -> some View {
-        VStack(alignment: .leading, spacing: 7) {
-            ForEach(colored, id: \.slice.id) { entry in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(entry.color)
-                        .frame(width: 9, height: 9)
-                    Text(entry.slice.label)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 12)
-                    Text(Format.percent(entry.slice.fraction))
+        DashboardCard {
+            VStack(alignment: .leading, spacing: 14) {
+                DashboardSectionTitle("System Load") {
+                    Text("60 seconds")
+                        .font(.caption)
                         .foregroundStyle(.secondary)
-                        .monospacedDigit()
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(AMPStyle.subtleFill, in: Capsule())
                 }
-                .font(.callout)
-                .accessibilityElement(children: .combine)
-                .accessibilityIdentifier("overview.cpuLegend.\(entry.slice.label)")
+                .accessibilityIdentifier("overview.cpuCard")
+
+                HStack(alignment: .top, spacing: 20) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(alignment: .firstTextBaseline, spacing: 6) {
+                            Text(Format.percent(model.cpu.totalUsedFraction))
+                                .font(.system(size: 35, weight: .semibold, design: .rounded))
+                                .foregroundStyle(AMPStyle.blue)
+                                .monospacedDigit()
+                                .accessibilityIdentifier("overview.cpuTotalLabel")
+                            Text("CPU")
+                                .font(.headline)
+                                .foregroundStyle(.secondary)
+                        }
+                        splitRow("User", model.cpu.userFraction, AMPStyle.blue)
+                        splitRow("System", model.cpu.systemFraction, AMPStyle.orange)
+                        splitRow("Idle", model.cpu.idleFraction, .secondary)
+                    }
+                    .frame(width: 118, alignment: .leading)
+
+                    cpuHistoryChart
+                        .frame(maxWidth: .infinity)
+                }
+                .frame(height: 142)
+
+                Divider()
+
+                DashboardSectionTitle("Top Processes") {
+                    Button("View Processes") { navigateSidebar(.processes) }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+
+                VStack(spacing: 8) {
+                    ForEach(topProcesses) { process in
+                        processRow(process)
+                    }
+                }
             }
-            Divider()
-                .frame(maxWidth: 260)
-            // Activity-Monitor-style host split; also explains a large "Other"
-            // (root-owned load can't be attributed per-process without root).
-            Text("User \(Format.percent(model.cpu.userFraction))  ·  System \(Format.percent(model.cpu.systemFraction))  ·  Idle \(Format.percent(model.cpu.idleFraction))")
-                .font(.caption)
+        }
+        .frame(minHeight: 368)
+    }
+
+    private func splitRow(_ title: String, _ value: Double, _ color: Color) -> some View {
+        HStack(spacing: 7) {
+            Circle().fill(color).frame(width: 7, height: 7)
+            Text(title)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text(Format.percent(value))
+                .monospacedDigit()
+        }
+        .font(.caption)
+    }
+
+    @ViewBuilder
+    private var cpuHistoryChart: some View {
+        if model.systemHistory.count >= 2 {
+            Chart(model.systemHistory) { point in
+                AreaMark(x: .value("Time", point.timestamp),
+                         y: .value("CPU", point.cpuUsedFraction))
+                    .foregroundStyle(LinearGradient(
+                        colors: [AMPStyle.blue.opacity(0.2), AMPStyle.blue.opacity(0.01)],
+                        startPoint: .top, endPoint: .bottom))
+                LineMark(x: .value("Time", point.timestamp),
+                         y: .value("CPU", point.cpuUsedFraction))
+                    .foregroundStyle(AMPStyle.blue)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+                    .interpolationMethod(.catmullRom)
+            }
+            .chartYScale(domain: 0...1)
+            .chartXAxis(.hidden)
+            .chartYAxis {
+                AxisMarks(position: .leading, values: [0, 0.5, 1]) { value in
+                    AxisGridLine().foregroundStyle(AMPStyle.border)
+                    AxisValueLabel {
+                        if let fraction = value.as(Double.self) {
+                            Text(Format.percent(fraction))
+                        }
+                    }
+                }
+            }
+            .chartLegend(.hidden)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("CPU usage history, \(Format.percent(model.cpu.totalUsedFraction)) in use")
+            .accessibilityIdentifier("overview.cpuDonut")
+        } else {
+            RoundedRectangle(cornerRadius: 8)
+                .fill(AMPStyle.blue.opacity(0.06))
+                .overlay {
+                    Text("Collecting history…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityIdentifier("overview.cpuDonut")
+        }
+    }
+
+    private func processRow(_ process: ProcessSample) -> some View {
+        let maxCPU = max(topProcesses.first?.cpuFraction ?? 0.01, 0.01)
+        return HStack(spacing: 9) {
+            ProcessIconView(pid: process.pid, size: 22)
+            Text(process.name)
+                .font(.callout)
+                .lineLimit(1)
+                .frame(width: 120, alignment: .leading)
+            ResourceBar(fraction: (process.cpuFraction ?? 0) / maxCPU)
+            Text(process.cpuFraction.map(Format.percent) ?? "—")
+                .font(.callout)
                 .foregroundStyle(.secondary)
                 .monospacedDigit()
-                .accessibilityIdentifier("overview.cpuSplit")
+                .frame(width: 48, alignment: .trailing)
         }
-        .frame(maxWidth: 280)
+        .accessibilityElement(children: .combine)
+        .accessibilityIdentifier("overview.cpuLegend.\(process.name)")
     }
 }
