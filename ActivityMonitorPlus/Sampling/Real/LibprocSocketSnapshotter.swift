@@ -79,7 +79,8 @@ enum LibprocSocketSnapshotter {
         return ConnectionSnapshot(
             key: ConnectionKey(proto: proto, local: local, remote: remote,
                                pid: Int32(pid)),
-            processName: name, state: state, rxBytes: 0, txBytes: 0)
+            processName: name, state: state, rxBytes: 0, txBytes: 0,
+            byteCountersAvailable: false)
     }
 
     private static func endpoint(address: in_sockinfo.__Unnamed_union_insi_laddr,

@@ -2,6 +2,8 @@ import Foundation
 
 struct SamplingUpdate: Sendable {
     var snapshot: SystemSnapshot
+    var connections: [ConnectionSnapshot]
+    var activeConnectionCount: Int
     var connectionEvents: [ConnectionEvent]
 }
 
@@ -47,6 +49,8 @@ actor SamplingCoordinator {
             let sockets = await connections.snapshot()
             let events = diffEngine.ingest(sockets, at: now)
             continuation.yield(SamplingUpdate(snapshot: snapshot,
+                                              connections: sockets,
+                                              activeConnectionCount: Set(sockets.map(\.key)).count,
                                               connectionEvents: events))
             do {
                 try await Task.sleep(for: interval)

@@ -24,7 +24,12 @@ final class AppModel {
     /// larger eventLog for history and process inspection.
     private static let displayedNetworkEventLimit = 300
 
-    private(set) var cpu = CPUSnapshot(totalUsedFraction: 0, coreCount: 1, processes: [])
+    private(set) var cpu = CPUSnapshot(
+        isReady: false,
+        totalUsedFraction: 0,
+        coreCount: 1,
+        processes: []
+    )
     private(set) var donutSlices: [DonutSlice] = []
     /// Bumped once per sampling tick; views observe this to refresh derived state.
     private(set) var lastUpdate = Date.distantPast
@@ -33,6 +38,12 @@ final class AppModel {
     private(set) var throughput = NetworkThroughput.zero
     private(set) var throughputHistory: [ThroughputPoint] = []
     private(set) var systemHistory: [SystemHistoryPoint] = []
+    /// Current non-listening, non-loopback sockets from the latest sample.
+    /// Kept separately from the bounded/pausable event log so automation and
+    /// status queries always describe live network state.
+    private(set) var currentConnections: [ConnectionSnapshot] = []
+    /// Deduplicated off the UI actor once per sampling tick.
+    private(set) var activeConnectionCount = 0
     /// Newest-first, for the network log table.
     private(set) var connectionEvents: [ConnectionEvent] = []
     var isNetworkLogPaused = false {
@@ -80,6 +91,12 @@ final class AppModel {
         Task { [coordinator] in await coordinator.stop() }
     }
 
+    func shutdown() async {
+        consumeTask?.cancel()
+        consumeTask = nil
+        await coordinator.stop()
+    }
+
     func clearNetworkLog() {
         eventLog.removeAll()
         connectionEvents = []
@@ -103,18 +120,6 @@ final class AppModel {
             .filter { $0.pid == pid }.prefix(limit))
     }
 
-    var activeConnectionCount: Int {
-        var resolved = Set<ConnectionKey>()
-        var count = 0
-        for event in connectionEvents {
-            let key = ConnectionKey(proto: event.proto, local: event.local,
-                                    remote: event.remote, pid: event.pid)
-            guard resolved.insert(key).inserted else { continue }
-            if event.kind != .closed { count += 1 }
-        }
-        return count
-    }
-
     private func apply(_ update: SamplingUpdate) {
         let snapshot = update.snapshot
         DebugLog.write("apply total=\(snapshot.cpu.totalUsedFraction) at \(snapshot.timestamp.timeIntervalSince1970)")
@@ -126,6 +131,8 @@ final class AppModel {
         memory = snapshot.memory
         volumes = snapshot.volumes
         throughput = snapshot.throughput
+        currentConnections = update.connections
+        activeConnectionCount = update.activeConnectionCount
         systemHistory.append(SystemHistoryPoint(
             timestamp: snapshot.timestamp,
             cpuUsedFraction: snapshot.cpu.totalUsedFraction,

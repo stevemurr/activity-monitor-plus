@@ -16,10 +16,12 @@ final class LiveCPUSampler: CPUSampling {
     }
 
     func sample() -> CPUSnapshot {
+        let hasBaseline = previousTicks != nil && previousSampleTime != 0
         let coreCount = ProcessInfo.processInfo.activeProcessorCount
         let (user, system) = sampleHostSplit()
         let processes = sampleProcesses(coreCount: coreCount)
-        return CPUSnapshot(totalUsedFraction: user + system,
+        return CPUSnapshot(isReady: hasBaseline,
+                           totalUsedFraction: user + system,
                            userFraction: user,
                            systemFraction: system,
                            coreCount: coreCount,

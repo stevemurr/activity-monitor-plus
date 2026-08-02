@@ -22,6 +22,9 @@ struct ConnectionSnapshot: Sendable {
     var state: String?
     var rxBytes: UInt64
     var txBytes: UInt64
+    /// False when the native libproc fallback can identify the socket but the
+    /// OS does not expose its byte counters through that API.
+    var byteCountersAvailable: Bool = true
 }
 
 struct ConnectionEvent: Identifiable, Sendable {

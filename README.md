@@ -29,6 +29,9 @@ table behind it.
   protocol composition. Pause and clear from the toolbar.
 - **Menu bar extra.** A compact companion dashboard with CPU history, memory,
   network rates, and the top three processes without opening the main window.
+- **Optional local automation.** Approved local apps can query live system
+  status, CPU/process activity, network/process connections, and disk capacity
+  through a secure, paired Local MCP producer.
 - **Appearance.** Follows the system Light/Dark setting, with a manual override
   in Settings (⌘,).
 
@@ -55,11 +58,16 @@ The app is built around a small, testable core and a clean sampling seam.
 - **Pure core.** The parsing and transformation logic — `NetstatParser`,
   `ConnectionDiffEngine`, `CPUDonutSlices`, `ProcessSmoother`, `StableRanker`,
   `RingBuffer`, `Formatters` — is free of I/O and unit-tested on the host.
+- **Local automation seam.** Dedicated Codable wire DTOs and a Sendable bridge
+  expose bounded snapshots without making SwiftUI state or sampler models part
+  of the Local MCP contract. The app delegate owns producer startup and clean
+  shutdown.
 
 ```
 ActivityMonitorPlus/
 ├── App/            @main app, AppModel, appearance
 ├── Models/         snapshots, connection events, ring buffer, donut/table logic
+├── LocalMCP/       read-only commands, pairing, grants, producer lifecycle
 ├── Sampling/       protocols, coordinator, parser, diff engine, live + fixtures
 ├── Views/          Overview cards, process table, network log, menu bar
 └── Support/        formatters
@@ -67,9 +75,10 @@ ActivityMonitorPlus/
 
 ## Getting started
 
-**Requirements:** macOS 15+, Xcode with the Swift 6 toolchain, and
-[XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
-The `.xcodeproj` is generated, not committed.
+**Requirements:** macOS 15+, Xcode with the Swift 6 toolchain, an Apple
+Development signing team, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
+(`brew install xcodegen`). The `.xcodeproj` is generated, not committed. Change
+`DEVELOPMENT_TEAM` in `project.yml` when building with a different account.
 
 ```bash
 git clone https://github.com/stevemurr/activity-monitor-plus.git
@@ -80,7 +89,32 @@ xcodebuild -scheme ActivityMonitorPlus -configuration Release build
 ```
 
 The app is **non-sandboxed** (it reads other processes' statistics and spawns
-`netstat`) and **ad-hoc signed** for personal use.
+`netstat`) and uses Apple Development signing for its Keychain access group.
+
+## Local MCP
+
+The [LocalMCPKit](https://github.com/stevemurr/local-mcp-kit) producer is
+disabled by default. Enable it under **Settings → Local MCP**. It listens only
+on IPv4 loopback and advertises through LocalOnly Bonjour; discovery alone does
+not grant access. Every new consumer must be explicitly approved after its
+verification code is matched, and grants can be reviewed or revoked in
+Settings.
+
+Approved consumers may call four read-only tools:
+
+- `activity_monitor.status` — sample freshness plus CPU, memory, throughput,
+  active-connection, process, and disk counts
+- `activity_monitor.cpu_processes` — bounded process queries by name/PID, CPU
+  threshold, and sort order
+- `activity_monitor.network_processes` — bounded live socket and endpoint
+  details grouped by process
+- `activity_monitor.disks` — mounted-volume capacity and usage information
+
+Network endpoint metadata and process names can be sensitive even though these
+tools cannot quit processes or modify files. Pair only with local apps you
+trust. Producer grants are stored in the macOS data-protection Keychain under a
+team-scoped access group, so authorized consumers remain manageable across app
+rebuilds.
 
 ## Testing
 

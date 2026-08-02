@@ -7,9 +7,15 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
-    CODE_SIGN_STYLE: Manual
-    CODE_SIGN_IDENTITY: "-"
-    DEVELOPMENT_TEAM: ""
+    # Local MCP grants use the data-protection Keychain. A stable team
+    # signature and team-derived access group keep those grants readable
+    # across rebuilds.
+    CODE_SIGN_STYLE: Automatic
+    DEVELOPMENT_TEAM: 6237SR7A22
+packages:
+  LocalMCPKit:
+    url: https://github.com/stevemurr/local-mcp-kit
+    revision: a94a1923db95c9e1b6a4d381db956717e6cba01a
 targets:
   ActivityMonitorPlus:
     type: application
@@ -18,6 +24,25 @@ targets:
     settings:
       base:
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_ENTITLEMENTS: ActivityMonitorPlus.entitlements
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: NO
+    dependencies:
+      - package: LocalMCPKit
+        product: LocalMCPContracts
+      - package: LocalMCPKit
+        product: LocalMCPDiscoveryBonjour
+      - package: LocalMCPKit
+        product: LocalMCPProducer
+      # Hosted unit tests exercise a full in-process producer/consumer flow.
+      # Link all test-used LocalMCP modules into the host app so the process
+      # contains one copy of each module and cross-boundary error casts work.
+      - package: LocalMCPKit
+        product: LocalMCPConsumer
+      - package: LocalMCPKit
+        product: LocalMCPDiscovery
+      - package: LocalMCPKit
+        product: LocalMCPTesting
     info:
       path: ActivityMonitorPlus/Info.plist
       properties:

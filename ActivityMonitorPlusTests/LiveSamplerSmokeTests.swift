@@ -6,10 +6,12 @@ import XCTest
 final class LiveSamplerSmokeTests: XCTestCase {
     func testLiveCPUSamplerProducesPlausibleData() throws {
         let sampler = LiveCPUSampler()
-        _ = sampler.sample() // baseline
+        let baseline = sampler.sample()
+        XCTAssertFalse(baseline.isReady)
         Thread.sleep(forTimeInterval: 0.3)
         let snapshot = sampler.sample()
 
+        XCTAssertTrue(snapshot.isReady)
         XCTAssertGreaterThan(snapshot.coreCount, 0)
         XCTAssertTrue((0...1).contains(snapshot.totalUsedFraction))
         XCTAssertGreaterThan(snapshot.processes.count, 10)

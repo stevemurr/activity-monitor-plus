@@ -10,6 +10,9 @@ struct SystemSnapshot: Sendable {
 }
 
 struct CPUSnapshot: Sendable {
+    /// False while a delta-based sampler is collecting its initial baseline.
+    /// Fixture and other immediately meaningful samplers can keep the default.
+    var isReady: Bool = true
     /// Fraction of total machine capacity in use (0...1), from host tick deltas.
     var totalUsedFraction: Double
     /// Activity-Monitor-style split of the total: user (incl. nice) and system.
