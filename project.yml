@@ -10,8 +10,13 @@ settings:
     # Local MCP grants use the data-protection Keychain. A stable team
     # signature and team-derived access group keep those grants readable
     # across rebuilds.
+    #
+    # Use the paid Developer Program team, not the free personal team
+    # (6237SR7A22). The personal team only issues 7-day provisioning
+    # profiles, and once one expires AMFI refuses to launch the app at all
+    # because of the restricted keychain-access-groups entitlement.
     CODE_SIGN_STYLE: Automatic
-    DEVELOPMENT_TEAM: 6237SR7A22
+    DEVELOPMENT_TEAM: 9AKW22W4WR
 packages:
   LocalMCPKit:
     url: https://github.com/stevemurr/local-mcp-kit
