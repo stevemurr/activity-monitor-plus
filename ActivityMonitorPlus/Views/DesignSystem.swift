@@ -161,6 +161,27 @@ struct MetricTile: View {
     }
 }
 
+/// `NSRunningApplication(processIdentifier:)` hits LaunchServices and `.icon`
+/// reads the app bundle off disk (visible as `__getattrlist` and KVO hashing in
+/// a main-thread sample). At ~27 µs per lookup that is ~4 ms for one 150-row
+/// pass of the process table — repeated on every 1 Hz refresh and every click,
+/// for icons that never change. Resolve once per pid instead.
+@MainActor
+private enum ProcessIconCache {
+    private static var icons: [Int32: NSImage?] = [:]
+
+    static func icon(for pid: Int32) -> NSImage? {
+        if let cached = icons[pid] { return cached }
+        let icon = NSRunningApplication(processIdentifier: pid_t(pid))?.icon
+        // Bounded so a long session churning through short-lived pids cannot
+        // grow this without limit. Dropping everything is fine: entries are
+        // reconstructed on demand.
+        if icons.count > 4096 { icons.removeAll() }
+        icons[pid] = icon
+        return icon
+    }
+}
+
 /// Resolves a live application icon where possible and uses a stable native
 /// fallback for system daemons and test fixtures.
 struct ProcessIconView: View {
@@ -168,7 +189,7 @@ struct ProcessIconView: View {
     var size: CGFloat = 28
 
     private var runningIcon: NSImage? {
-        NSRunningApplication(processIdentifier: pid_t(pid))?.icon
+        ProcessIconCache.icon(for: pid)
     }
 
     var body: some View {

@@ -27,8 +27,20 @@ struct NetworkLogView: View {
         var id: String { proto.rawValue }
     }
 
-    private var filteredEvents: [ConnectionEvent] {
-        model.connectionEvents.filter { event in
+    /// Everything the panels below need, derived in one pass. These were four
+    /// separate computed properties, each re-running the filter over the event
+    /// log — so a single body pass filtered 300 events four times (~0.6 ms per
+    /// pass once a search term makes `localizedCaseInsensitiveContains` run),
+    /// on every keystroke and every 1 Hz refresh.
+    private struct Derived {
+        var events: [ConnectionEvent] = []
+        var processRows: [NetworkLogRow] = []
+        var activity: [ActivitySummary] = []
+        var protocols: [ProtocolSummary] = []
+    }
+
+    private func derive() -> Derived {
+        let events = model.connectionEvents.filter { event in
             let matchesText = filter.isEmpty
                 || event.processName.localizedCaseInsensitiveContains(filter)
                 || event.remote.localizedCaseInsensitiveContains(filter)
@@ -42,41 +54,40 @@ struct NetworkLogView: View {
                 return event.timestamp >= model.lastUpdate.addingTimeInterval(-30)
             }
         }
-    }
 
-    private var processRows: [NetworkLogRow] {
-        NetworkLogRow.groupedByProcess(filteredEvents)
-    }
-
-    private var activity: [ActivitySummary] {
-        Dictionary(grouping: filteredEvents) {
-            NetworkProcessKey(name: $0.processName, pid: $0.pid)
+        var byProcess: [NetworkProcessKey: (in: UInt64, out: UInt64)] = [:]
+        var byProto: [NetProto: Int] = [:]
+        for event in events {
+            let key = NetworkProcessKey(name: event.processName, pid: event.pid)
+            byProcess[key, default: (0, 0)].in += event.bytesIn
+            byProcess[key, default: (0, 0)].out += event.bytesOut
+            byProto[event.proto, default: 0] += 1
         }
-        .map { process, events in
-            ActivitySummary(process: process,
-                            bytesIn: events.reduce(0) { $0 + $1.bytesIn },
-                            bytesOut: events.reduce(0) { $0 + $1.bytesOut })
-        }
-        .sorted { ($0.bytesIn + $0.bytesOut) > ($1.bytesIn + $1.bytesOut) }
-    }
 
-    private var protocols: [ProtocolSummary] {
-        Dictionary(grouping: filteredEvents, by: \.proto)
-            .map { ProtocolSummary(proto: $0.key, count: $0.value.count) }
-            .sorted { $0.count > $1.count }
+        return Derived(
+            events: events,
+            processRows: NetworkLogRow.groupedByProcess(events),
+            activity: byProcess
+                .map { ActivitySummary(process: $0.key, bytesIn: $0.value.in,
+                                       bytesOut: $0.value.out) }
+                .sorted { ($0.bytesIn + $0.bytesOut) > ($1.bytesIn + $1.bytesOut) },
+            protocols: byProto
+                .map { ProtocolSummary(proto: $0.key, count: $0.value) }
+                .sorted { $0.count > $1.count })
     }
 
     var body: some View {
+        let derived = derive()
         VStack(spacing: 16) {
             throughputPanel
 
             HStack(alignment: .top, spacing: 16) {
-                connectionsPanel
+                connectionsPanel(derived)
                     .frame(maxWidth: .infinity)
                     .layoutPriority(2)
                 VStack(spacing: 16) {
-                    topActivityPanel
-                    protocolsPanel
+                    topActivityPanel(derived.activity)
+                    protocolsPanel(derived.protocols)
                 }
                 .frame(width: 255)
             }
@@ -206,7 +217,7 @@ struct NetworkLogView: View {
         }
     }
 
-    private var connectionsPanel: some View {
+    private func connectionsPanel(_ derived: Derived) -> some View {
         DashboardCard {
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
@@ -234,12 +245,12 @@ struct NetworkLogView: View {
                 }
                 .padding(.bottom, 12)
                 Divider()
-                connectionTable
+                connectionTable(derived)
             }
         }
     }
 
-    private var connectionTable: some View {
+    private func connectionTable(_ derived: Derived) -> some View {
         Table(of: NetworkLogRow.self) {
             TableColumn("Process") { row in
                 if row.isProcessGroup {
@@ -298,7 +309,7 @@ struct NetworkLogView: View {
             }
             .width(min: 52, ideal: 62, max: 76)
         } rows: {
-            ForEach(processRows) { processRow in
+            ForEach(derived.processRows) { processRow in
                 DisclosureTableRow(
                     processRow,
                     isExpanded: expansionBinding(for: processRow.process)
@@ -311,7 +322,7 @@ struct NetworkLogView: View {
         }
         .accessibilityIdentifier("network.table")
         .overlay {
-            if filteredEvents.isEmpty {
+            if derived.events.isEmpty {
                 ContentUnavailableView(
                     "No Network Events Yet",
                     systemImage: "network",
@@ -321,7 +332,7 @@ struct NetworkLogView: View {
         .frame(minHeight: 330)
     }
 
-    private var topActivityPanel: some View {
+    private func topActivityPanel(_ activity: [ActivitySummary]) -> some View {
         DashboardCard {
             VStack(alignment: .leading, spacing: 12) {
                 DashboardSectionTitle("Top Activity")
@@ -355,7 +366,7 @@ struct NetworkLogView: View {
         }
     }
 
-    private var protocolsPanel: some View {
+    private func protocolsPanel(_ protocols: [ProtocolSummary]) -> some View {
         DashboardCard {
             VStack(alignment: .leading, spacing: 12) {
                 DashboardSectionTitle("Protocols")

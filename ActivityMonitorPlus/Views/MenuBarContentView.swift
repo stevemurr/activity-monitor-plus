@@ -11,12 +11,7 @@ struct MenuBarContentView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.openWindow) private var openWindow
 
-    private var topProcesses: [ProcessSample] {
-        Array(model.cpu.processes
-            .filter { $0.cpuFraction != nil }
-            .sorted { ($0.cpuFraction ?? 0) > ($1.cpuFraction ?? 0) }
-            .prefix(3))
-    }
+    private var topProcesses: [ProcessSample] { model.topProcesses }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -174,8 +169,9 @@ struct MenuBarContentView: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Top Processes")
                     .font(.headline)
-                let maxCPU = max(topProcesses.first?.cpuFraction ?? 0.01, 0.01)
-                ForEach(topProcesses) { process in
+                let processes = topProcesses
+                let maxCPU = max(processes.first?.cpuFraction ?? 0.01, 0.01)
+                ForEach(processes) { process in
                     HStack(spacing: 8) {
                         ProcessIconView(pid: process.pid, size: 23)
                         Text(process.name)

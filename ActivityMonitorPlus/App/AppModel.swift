@@ -31,6 +31,10 @@ final class AppModel {
         processes: []
     )
     private(set) var donutSlices: [DonutSlice] = []
+    /// Highest-CPU processes, ranked once per tick. The Overview card and the
+    /// menu-bar panel each read this several times while building their body;
+    /// deriving it there re-filtered and re-sorted all ~1000 samples per read.
+    private(set) var topProcesses: [ProcessSample] = []
     /// Bumped once per sampling tick; views observe this to refresh derived state.
     private(set) var lastUpdate = Date.distantPast
     private(set) var memory: MemorySnapshot?
@@ -116,8 +120,7 @@ final class AppModel {
     }
 
     func recentEvents(forPid pid: Int32, limit: Int = 8) -> [ConnectionEvent] {
-        Array(eventLog.newestFirst(limit: eventLog.count).lazy
-            .filter { $0.pid == pid }.prefix(limit))
+        eventLog.newestFirst(limit: limit) { $0.pid == pid }
     }
 
     private func apply(_ update: SamplingUpdate) {
@@ -127,6 +130,10 @@ final class AppModel {
         cpuSnapshot.processes = smoother.smooth(cpuSnapshot.processes)
         cpu = cpuSnapshot
         donutSlices = CPUDonutSlices.compute(cpu: cpuSnapshot)
+        topProcesses = Array(cpuSnapshot.processes
+            .filter { $0.cpuFraction != nil }
+            .sorted { ($0.cpuFraction ?? 0) > ($1.cpuFraction ?? 0) }
+            .prefix(3))
         lastUpdate = snapshot.timestamp
         memory = snapshot.memory
         volumes = snapshot.volumes

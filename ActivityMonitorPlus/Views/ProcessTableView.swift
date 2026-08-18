@@ -37,10 +37,9 @@ struct ProcessTableView: View {
         displayed.filter { selection.contains($0.pid) }
     }
 
-    private var topProcess: ProcessRow? {
-        model.cpu.processes.map(ProcessRow.init)
-            .max { $0.cpuSortKey < $1.cpuSortKey }
-    }
+    /// Ranked once per tick on the model. Building `ProcessRow`s for all ~1000
+    /// samples here ran twice per body pass, once for each tile field.
+    private var topProcess: ProcessSample? { model.topProcesses.first }
 
     var body: some View {
         VStack(spacing: 16) {
@@ -104,9 +103,10 @@ struct ProcessTableView: View {
                        color: AMPStyle.purple,
                        progress: model.memory?.usedFraction,
                        symbol: "memorychip")
+            let top = topProcess
             MetricTile(title: "Top Process",
-                       value: topProcess?.name ?? "—",
-                       detail: topProcess?.cpuFraction.map(Format.percent),
+                       value: top?.name ?? "—",
+                       detail: top?.cpuFraction.map(Format.percent),
                        color: AMPStyle.blue,
                        symbol: "chart.bar.fill")
         }

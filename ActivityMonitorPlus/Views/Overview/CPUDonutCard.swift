@@ -7,12 +7,7 @@ struct CPUDonutCard: View {
     @Environment(AppModel.self) private var model
     @Environment(\.navigateSidebar) private var navigateSidebar
 
-    private var topProcesses: [ProcessSample] {
-        Array(model.cpu.processes
-            .filter { $0.cpuFraction != nil }
-            .sorted { ($0.cpuFraction ?? 0) > ($1.cpuFraction ?? 0) }
-            .prefix(3))
-    }
+    private var topProcesses: [ProcessSample] { model.topProcesses }
 
     var body: some View {
         DashboardCard {
@@ -59,8 +54,10 @@ struct CPUDonutCard: View {
                 }
 
                 VStack(spacing: 8) {
-                    ForEach(topProcesses) { process in
-                        processRow(process)
+                    let processes = topProcesses
+                    let maxCPU = max(processes.first?.cpuFraction ?? 0.01, 0.01)
+                    ForEach(processes) { process in
+                        processRow(process, maxCPU: maxCPU)
                     }
                 }
             }
@@ -123,9 +120,8 @@ struct CPUDonutCard: View {
         }
     }
 
-    private func processRow(_ process: ProcessSample) -> some View {
-        let maxCPU = max(topProcesses.first?.cpuFraction ?? 0.01, 0.01)
-        return HStack(spacing: 9) {
+    private func processRow(_ process: ProcessSample, maxCPU: Double) -> some View {
+        HStack(spacing: 9) {
             ProcessIconView(pid: process.pid, size: 22)
             Text(process.name)
                 .font(.callout)
