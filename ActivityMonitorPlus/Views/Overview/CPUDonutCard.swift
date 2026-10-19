@@ -75,6 +75,11 @@ struct CPUDonutCard: View {
                 .monospacedDigit()
         }
         .font(.caption)
+        .accessibilityElement(children: .ignore)
+        // macOS does not expose a separate AX value for this grouped row.
+        // Include both fields in its label so VoiceOver reads the full metric.
+        .accessibilityLabel("\(title) \(Format.percent(value))")
+        .accessibilityIdentifier("overview.cpuSplit.\(title.lowercased())")
     }
 
     @ViewBuilder
