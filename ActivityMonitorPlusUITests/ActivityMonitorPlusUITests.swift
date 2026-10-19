@@ -66,6 +66,12 @@ final class ActivityMonitorPlusUITests: XCTestCase {
         return value.isEmpty ? element.label : value
     }
 
+    private func processNameInTable(_ name: String) -> XCUIElement {
+        // The summary tile and selection inspector repeat process names.
+        // Only table descendants can select a row or establish sort order.
+        element("processes.table").staticTexts[name].firstMatch
+    }
+
     func testOverviewRendersFixtureData() {
         let total = element("overview.cpuTotalLabel")
         XCTAssertTrue(total.waitForExistence(timeout: 10))
@@ -82,9 +88,14 @@ final class ActivityMonitorPlusUITests: XCTestCase {
         XCTAssertTrue(element("overview.networkCard").exists)
         XCTAssertTrue(staticText(containing: "1.3 MB/s").exists, "in-rate missing")
 
-        // Activity-Monitor-style split row from the fixture host ticks.
-        XCTAssertTrue(staticText(containing: "User 44%").waitForExistence(timeout: 10),
-                      "cpu user/system/idle split missing")
+        // Each split row pairs its category with an exact fixture percentage.
+        // The dashboard renders these as separate rows, not one combined text.
+        for (category, expected) in [("User", "44%"), ("System", "18%"), ("Idle", "38%")] {
+            let split = element("overview.cpuSplit.\(category.lowercased())")
+            XCTAssertTrue(split.waitForExistence(timeout: 10), "\(category) CPU split missing")
+            XCTAssertEqual(split.label, "\(category) \(expected)",
+                           "unexpected accessible \(category) CPU share")
+        }
 
         // Storage card shows the fixture volumes.
         XCTAssertTrue(element("overview.storage.Fixture HD", fallbackLabel: "Fixture HD")
@@ -95,8 +106,8 @@ final class ActivityMonitorPlusUITests: XCTestCase {
         openSidebarItem("processes", fallbackLabel: "Processes")
         XCTAssertTrue(element("processes.table").waitForExistence(timeout: 10))
 
-        let procA = app.staticTexts["FixtureProcA"].firstMatch
-        let procF = app.staticTexts["FixtureProcF"].firstMatch
+        let procA = processNameInTable("FixtureProcA")
+        let procF = processNameInTable("FixtureProcF")
         XCTAssertTrue(procA.waitForExistence(timeout: 10))
         XCTAssertTrue(procF.exists)
 
@@ -112,9 +123,12 @@ final class ActivityMonitorPlusUITests: XCTestCase {
         XCTAssertTrue(lowest.waitForExistence(timeout: 5))
         lowest.click()
 
-        XCTAssertTrue(procA.waitForExistence(timeout: 5))
-        XCTAssertGreaterThan(procA.frame.minY, procF.frame.minY,
-                             "expected FixtureProcA below FixtureProcF for Lowest CPU")
+        let ascendingOrder = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                procA.exists && procF.exists && procA.frame.minY > procF.frame.minY
+            }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ascendingOrder], timeout: 5), .completed,
+                       "expected FixtureProcA below FixtureProcF for Lowest CPU")
     }
 
     func testMenuBarExtraExists() {
@@ -127,7 +141,7 @@ final class ActivityMonitorPlusUITests: XCTestCase {
         openSidebarItem("processes", fallbackLabel: "Processes")
         XCTAssertTrue(element("processes.table").waitForExistence(timeout: 10))
 
-        let procF = app.staticTexts["FixtureProcF"].firstMatch
+        let procF = processNameInTable("FixtureProcF")
         XCTAssertTrue(procF.waitForExistence(timeout: 10))
         procF.click() // select the row
 
@@ -144,19 +158,23 @@ final class ActivityMonitorPlusUITests: XCTestCase {
         XCTAssertTrue(procF.waitForNonExistence(timeout: 10),
                       "FixtureProcF should disappear after quit")
         // The rest of the table is unaffected.
-        XCTAssertTrue(app.staticTexts["FixtureProcA"].firstMatch.exists)
+        XCTAssertTrue(processNameInTable("FixtureProcA").exists)
     }
 
     func testProcessInspectShowsDetails() {
         openSidebarItem("processes", fallbackLabel: "Processes")
         XCTAssertTrue(element("processes.table").waitForExistence(timeout: 10))
 
-        let procA = app.staticTexts["FixtureProcA"].firstMatch
+        let procA = processNameInTable("FixtureProcA")
         XCTAssertTrue(procA.waitForExistence(timeout: 10))
         procA.click()
 
         let inspectButton = element("processes.inspectButton")
         XCTAssertTrue(inspectButton.waitForExistence(timeout: 5))
+        let selected = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "enabled == true"), object: inspectButton)
+        XCTAssertEqual(XCTWaiter.wait(for: [selected], timeout: 5), .completed,
+                       "selecting the fixture table row should enable Inspect")
         inspectButton.click()
 
         // Anchor on concrete elements: bare layout containers don't surface
